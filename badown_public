@@ -1,0 +1,115 @@
+#!/bin/bash
+
+# Take the flag arguments and return variable such as flag_a (boolean) or flag_A (string)
+# NOTE: I know, that's smart.
+
+# background a downloader only wget new
+
+# Cache file to save Reddit api response.
+JSONCACHE="/tmp/reddit-wallpaper-cache.json"
+
+# Directory where wallpapers are going to be saved
+WPATH=${WALLPAPER_PATH:-"$HOME/img/wallpaper/reddit/"}
+outpath="$HOME/file/img/wallpaper/reddit"
+if [[ "$1" == "-b" ]]; then
+  prefix=$(date +%F)
+  count=$(ls -1 "$outpath" | grep "^$prefix" | wc -l)
+  count=$((count + 1))
+  id="${prefix}-${count}"
+  old_file="$(ls ${outpath}/wall_default.* | cut -d',' -f1)"
+  new_file=${outpath}/${id}.`echo $old_file | awk -F. '{print $NF}'`
+  cp $old_file $new_file &&  echo "Current wallpaper backed up to $new_file"  
+  exit 0
+fi
+
+mkdir -p $outpath
+
+# We need to change our user agent so Reddit allow us to get the JSON without errors
+USERAGENT="Mozilla/5.0 (X11; Linux x86_64; rv:100.0) Gecko/20100101 Firefox/100.0"
+
+#APIURL="https://www.reddit.com/r/wallpapers.json?limit=100"
+#APIURL="https://www.reddit.com/r/wallpapers/top.json?t=day&sort=top&limit=10"
+#APIURL="https://www.reddit.com/r/wallpapers/top.json?t=month&limit=20"
+APIURL="https://www.reddit.com/r/wallpapers/top.json?t=week&limit=40"
+
+# Remove cached response if older than 2 hours.
+find $(dirname $JSONCACHE) -name "$(basename $JSONCACHE)" -mmin +120 -exec rm {} \; 2>/dev/null
+
+# Remove wallpapers older than 2 days
+find $(dirname $WPATH) -mtime +2 -exec rm {} \; 2>/dev/null
+
+# exit on error
+set -e
+
+# If the cache file doesnt exist, we create it.
+if [ ! -f "$JSONCACHE" ]; then
+  curl -s -H "User-Agent: $USERAGENT" $APIURL -s > $JSONCACHE
+fi
+
+# loop through the JSON until a valid image is found
+while : ; do
+  # Get a random item from the returned JSON
+  WJSON=$(cat $JSONCACHE | jq -c '.data.children[].data' --raw-output | shuf -n 1)
+  # Check if crosspost
+  CROSSPOST=$(echo "$WJSON" | jq -c '.crosspost_parent_list[0]' --raw-output)
+  if [ "$CROSSPOST" != "null" ]; then
+    WJSON=$CROSSPOST
+  fi
+  WDOMAIN=$(echo "$WJSON" | jq '.domain' --raw-output)
+  if [ "$WDOMAIN" == "i.redd.it" ]; then
+    break
+  fi
+  if [ "$WDOMAIN" == "reddit.com" ]; then
+    break
+  fi
+  if [ "$WDOMAIN" == "i.imgur.com" ]; then
+    break
+  fi
+done
+
+# If the item is gallery, pick a random item from the gallery
+WISGALLERY=$(echo "$WJSON" | jq '.is_gallery')
+if [ "$WISGALLERY" == "true" ]; then
+  GITEM=$(echo "$WJSON" | jq -c '.media_metadata' --raw-output | jq -c 'to_entries[] | .value' | shuf -n 1)
+  WMIME=$(echo "$GITEM" | jq '.m' --raw-output)
+  WEXT=$(basename "$WMIME")
+  WID=$(echo $GITEM | jq '.id' --raw-output)
+  WURI="https://i.redd.it/$WID.$WEXT"
+# If the item is not gallery, obtain the image URL directly
+else
+  WURI=$(echo "$WJSON" | jq '.url' --raw-output)
+fi
+
+echo "wget -P $outpath $WURI"
+
+
+wget -q -P "$outpath" "$WURI"
+
+# Get the image name + extension
+WNAME=$(basename "$WURI")
+
+echo "$WNAME"
+
+FILEPATH="$WPATH/$WNAME"
+
+# If the image doesnt exists in our system, we download it.
+#if [ ! -f "$FILEPATH" ]; then
+#  curl "$WURI" -s > $FILEPATH
+#fi
+
+# get file path
+old_file="/home/$USER/file/img/wallpaper/reddit/${WNAME}"
+
+echo "old_file=$old_file"
+
+# move file to trash
+mv ${outpath}/wall_default.* /home/amos/.local/share/Trash/files/
+
+new_file=/home/$USER/file/img/wallpaper/reddit/wall_default.`echo $old_file | awk -F. '{print $NF}'`
+
+echo "new_file=$new_file"
+
+echo "mv $old_file $new_file"
+
+# rename to wall_default
+mv $old_file $new_file && feh --bg-fill ~/file/img/wallpaper/reddit/wall_default.*
